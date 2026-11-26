@@ -1,0 +1,10 @@
+{
+	"id": "feishu-docs-publisher",
+	"name": "larkdoc-sync",
+	"version": "0.4.3",
+	"minAppVersion": "1.13.0",
+	"description": "Publish Markdown notes, folders, and PDFs to Feishu/Lark Docs and keep them in sync through the local lark-cli.",
+	"author": "jipengju-GitHub",
+	"authorUrl": "https://github.com/jipengju-GitHub",
+	"isDesktopOnly": true
+}

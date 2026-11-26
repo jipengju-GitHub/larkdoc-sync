@@ -1,0 +1,6 @@
+node_modules/
+.idea/
+.tmp-*.mjs
+dist/
+src/embedded-helpers.ts
+main.js

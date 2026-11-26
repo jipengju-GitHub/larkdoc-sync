@@ -1,0 +1,400 @@
+.feishu-lark-settings-section {
+	margin-top: 28px;
+}
+
+.feishu-lark-settings-section .setting-item {
+	margin: 8px 0;
+	padding: 16px;
+	border: 0;
+	border-radius: 8px;
+	background: var(--background-secondary);
+}
+
+.feishu-lark-settings-section .setting-item + .setting-item {
+	border-top: 0;
+}
+
+.feishu-lark-settings-section .feishu-lark-advanced-row {
+	display: block;
+	padding: 0;
+}
+
+.feishu-lark-advanced-row > .setting-item-info,
+.feishu-lark-advanced-row > .setting-item-control {
+	display: none;
+}
+
+.feishu-lark-advanced > summary {
+	cursor: pointer;
+	padding: var(--size-4-4);
+}
+
+.feishu-lark-advanced-title {
+	font-weight: var(--font-semibold);
+}
+
+.feishu-lark-advanced > summary .setting-item-description {
+	display: block;
+	margin-top: var(--size-4-1);
+}
+
+.feishu-lark-advanced-content {
+	padding: 0 var(--size-4-4) var(--size-4-2);
+}
+
+.feishu-lark-pre-push-hook-status.is-installed {
+	color: var(--text-success);
+}
+
+.feishu-lark-pre-push-hook-status.is-error {
+	color: var(--text-error);
+}
+
+.feishu-lark-pre-push-hook-status.is-warning {
+	color: var(--text-warning);
+}
+
+.feishu-lark-pre-push-hook-status.is-muted {
+	color: var(--text-muted);
+}
+
+.feishu-lark-cli-status {
+	margin-top: 6px;
+	white-space: pre-line;
+	line-height: 1.45;
+}
+
+.feishu-lark-cli-status.is-success {
+	color: var(--text-success);
+}
+
+.feishu-lark-cli-status.is-warning {
+	color: var(--text-warning);
+}
+
+.feishu-lark-cli-status.is-error {
+	color: var(--text-error);
+}
+
+.feishu-lark-cli-status.is-muted,
+.feishu-lark-proxy-detail {
+	color: var(--text-muted);
+}
+
+.feishu-lark-proxy-detail {
+	margin-top: 6px;
+	white-space: pre-line;
+	line-height: 1.4;
+}
+
+.feishu-lark-settings-section .setting-item .setting-item-control {
+	flex-wrap: wrap;
+	gap: var(--size-4-2);
+}
+
+.setting-item.feishu-lark-settings-hidden,
+button.feishu-lark-settings-hidden {
+	display: none;
+}
+
+.larkdoc-sync-header-action svg {
+	width: 20px;
+	height: 20px;
+}
+
+.side-dock-ribbon .larkdoc-sync-ribbon-action svg {
+	width: 24px;
+	height: 24px;
+}
+
+.feishu-lark-published-modal {
+	width: min(760px, 92vw);
+}
+
+.feishu-lark-published-tabs {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--size-4-2);
+	margin-bottom: var(--size-4-3);
+}
+
+.feishu-lark-published-tabs [aria-selected="true"] {
+	background: var(--interactive-accent);
+	color: var(--text-on-accent);
+}
+
+.feishu-lark-published-tabs button:focus-visible {
+	outline: 2px solid var(--interactive-accent);
+	outline-offset: 2px;
+}
+
+.feishu-lark-log-toolbar {
+	display: flex;
+	justify-content: flex-end;
+	margin-bottom: var(--size-4-2);
+}
+
+.feishu-lark-log-results {
+	overflow-x: auto;
+}
+
+.feishu-lark-log-table {
+	width: 100%;
+	border-collapse: collapse;
+	text-align: start;
+}
+
+.feishu-lark-log-table th,
+.feishu-lark-log-table td {
+	padding: var(--size-4-2);
+	border-bottom: 1px solid var(--background-modifier-border);
+	vertical-align: top;
+}
+
+.feishu-lark-log-path {
+	min-width: 9em;
+	overflow-wrap: anywhere;
+}
+
+.feishu-lark-log-success {
+	color: var(--text-success);
+}
+
+.feishu-lark-log-failed {
+	color: var(--text-error);
+}
+
+.feishu-lark-published-entry,
+.feishu-lark-published-toolbar {
+	flex-wrap: wrap;
+	gap: var(--size-4-2);
+}
+
+.feishu-lark-published-entry .setting-item-info {
+	flex: 1 1 220px;
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+
+.feishu-lark-published-entry .setting-item-control {
+	flex: 0 0 auto;
+	gap: var(--size-4-2);
+}
+
+.feishu-lark-published-toolbar .setting-item-control {
+	flex-wrap: wrap;
+	gap: var(--size-4-2);
+}
+
+.feishu-lark-published-url {
+	flex-direction: column;
+	align-items: stretch;
+	gap: var(--size-4-2);
+}
+
+.feishu-lark-published-url .setting-item-control input {
+	width: 100%;
+}
+
+.feishu-lark-published-path {
+	overflow-wrap: anywhere;
+}
+
+.feishu-lark-published-feedback {
+	display: flex;
+	align-items: flex-start;
+	gap: var(--size-4-2);
+	margin: var(--size-4-2) 0;
+	padding: var(--size-4-2) var(--size-4-3);
+	border-left: 3px solid var(--text-faint);
+	border-radius: var(--radius-s);
+	background-color: var(--background-secondary);
+	white-space: pre-line;
+	overflow-wrap: anywhere;
+}
+
+.feishu-lark-published-feedback:empty {
+	display: none;
+}
+
+.feishu-lark-published-feedback.is-busy {
+	border-left-color: var(--interactive-accent);
+}
+
+.feishu-lark-published-feedback.is-busy::before {
+	content: "";
+	flex: 0 0 auto;
+	width: var(--size-4-3);
+	height: var(--size-4-3);
+	margin-top: var(--size-2-1);
+	border: 2px solid var(--background-modifier-border);
+	border-top-color: var(--interactive-accent);
+	border-radius: 50%;
+	animation: feishu-lark-spin 0.9s linear infinite;
+}
+
+.feishu-lark-published-feedback.is-error {
+	border-left-color: var(--text-error);
+	color: var(--text-error);
+}
+
+.feishu-lark-published-count {
+	margin: var(--size-4-2) 0 var(--size-4-1);
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+}
+
+@keyframes feishu-lark-spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.feishu-lark-published-feedback.is-busy::before {
+		animation: none;
+	}
+}
+
+.feishu-lark-delete-list {
+	max-height: 40vh;
+	overflow-y: auto;
+	overflow-wrap: anywhere;
+}
+
+.feishu-lark-ignore-view {
+	display: flex;
+	flex-direction: column;
+	gap: var(--size-4-2);
+	height: 100%;
+}
+
+.feishu-lark-ignore-toolbar {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--size-4-2);
+}
+
+.feishu-lark-ignore-toolbar input[type="search"] {
+	flex: 1 1 220px;
+	min-width: 0;
+}
+
+.feishu-lark-ignore-folder {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--size-4-2);
+	overflow-wrap: anywhere;
+}
+
+.feishu-lark-ignore-folder-title {
+	font-weight: var(--font-semibold);
+}
+
+.feishu-lark-ignore-summary {
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+}
+
+.feishu-lark-ignore-tree {
+	flex: 1 1 auto;
+	min-height: 0;
+	overflow-y: auto;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-m);
+	padding: var(--size-4-1);
+}
+
+.feishu-lark-ignore-empty {
+	color: var(--text-muted);
+	padding: var(--size-4-2);
+}
+
+.feishu-lark-ignore-row {
+	display: flex;
+	align-items: center;
+	gap: var(--size-2-2);
+	padding: var(--size-2-1) var(--size-4-2);
+	padding-left: calc(var(--size-4-2) + var(--feishu-lark-depth, 0) * var(--size-4-5));
+	border-radius: var(--radius-s);
+}
+
+.feishu-lark-ignore-row:hover {
+	background-color: var(--background-modifier-hover);
+}
+
+.feishu-lark-ignore-row.is-ignored .feishu-lark-ignore-name,
+.feishu-lark-ignore-row.is-ignored .feishu-lark-ignore-icon {
+	color: var(--text-faint);
+}
+
+.feishu-lark-ignore-toggle {
+	flex: 0 0 auto;
+	width: var(--size-4-5);
+	height: var(--size-4-5);
+}
+
+.feishu-lark-ignore-toggle.is-placeholder {
+	visibility: hidden;
+}
+
+.feishu-lark-ignore-label {
+	flex: 1 1 auto;
+	display: flex;
+	align-items: center;
+	gap: var(--size-4-2);
+	min-width: 0;
+	cursor: pointer;
+}
+
+.feishu-lark-ignore-icon {
+	display: inline-flex;
+	flex: 0 0 auto;
+	color: var(--text-muted);
+}
+
+.feishu-lark-ignore-name {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.feishu-lark-ignore-badge {
+	flex: 0 0 auto;
+	color: var(--text-faint);
+	font-size: var(--font-ui-smaller);
+}
+
+.feishu-lark-ignore-option {
+	display: flex;
+	align-items: center;
+	gap: var(--size-4-2);
+	width: 100%;
+	height: auto;
+	padding: var(--size-4-2);
+	border: none;
+	border-radius: var(--radius-s);
+	background: transparent;
+	box-shadow: none;
+	text-align: left;
+	cursor: pointer;
+}
+
+.feishu-lark-ignore-option:hover {
+	background-color: var(--background-modifier-hover);
+}
+
+.feishu-lark-ignore-editor {
+	display: block;
+	width: 100%;
+	min-height: 40vh;
+	font-family: var(--font-monospace);
+	resize: vertical;
+}
+
+.feishu-lark-ignore-actions {
+	display: flex;
+	gap: var(--size-4-2);
+	margin-top: var(--size-4-2);
+}
