@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import esbuild from "esbuild";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -89,6 +89,114 @@ const { default: LarkCliSyncPlugin } = await import("./.tmp-main-test.mjs");
 	assert.equal(ribbon.tooltip, "飞书文档同步助手");
 	assert.equal(attributes.get("aria-label"), "飞书文档同步助手");
 }
+// Migrate a single predecessor in a real temporary filesystem, without a Lark account.
+{
+	const root = await mkdtemp(join(tmpdir(), "larkdoc-id-migration-"));
+	const archived = "feishu-lark-cli-sync", prior = "feishu-docs-publisher", current = "larkdoc-sync";
+	const journal = `media-uploads/${"a".repeat(64)}.json`;
+	const settings = {
+		language: "en", targetTokenOrUrl: "wiki-test",
+		documentBindings: { "notes/report.md": { token: "report-doc", url: "https://example.feishu.cn/docx/report-doc" } },
+		nativeCalloutStates: { "report-doc": { version: 1, units: [] } },
+		attachmentStates: { "report-doc": { current: {}, pending: { path: "report.pdf" } } }
+	};
+	const durable = {
+		"data.json": JSON.stringify(settings),
+		"lark-sync-state.json": JSON.stringify({ version: 1, documents: { "report-doc": { doc: "report-doc", contentHash: "hash", units: [], updatedAt: "2026-01-01T00:00:00Z" } } }),
+		"publish-log.json": JSON.stringify([{ status: "success", path: "notes/report.md" }]),
+		[journal]: JSON.stringify({ doc: "report-doc", placeholder: "image-1", blockId: "image-block" })
+	};
+	const fixture = async (name, id = current) => {
+		const vault = join(root, name);
+		const config = join(vault, ".custom-obsidian");
+		const paths = (pluginId, file) => join(config, "plugins", pluginId, file);
+		await mkdir(config, { recursive: true });
+		const put = async (pluginId, files) => {
+			for (const [name, value] of Object.entries(files)) {
+				const path = paths(pluginId, name);
+				await mkdir(join(path, ".."), { recursive: true });
+				await writeFile(path, value);
+			}
+		};
+		const plugin = Object.create(LarkCliSyncPlugin.prototype);
+		plugin.app = { vault: { configDir: ".custom-obsidian" } };
+		plugin.manifest = { id };
+		plugin.getVaultBasePath = () => vault;
+		plugin.loadData = async () => JSON.parse(await readFile(paths(id, "data.json"), "utf8"));
+		return { plugin, put, paths, enabled: (ids) => writeFile(join(config, "community-plugins.json"), JSON.stringify(ids)) };
+	};
+	try {
+		const fx = await fixture("nearest");
+		await fx.put(archived, { "data.json": '{"targetTokenOrUrl":"older"}', [`media-uploads/${"b".repeat(64)}.json`]: "older" });
+		await fx.put(prior, { ...durable, "main.js": "never copy", "media-uploads/partial.tmp": "never copy" });
+		await fx.put(current, { "manifest.json": "new manifest" });
+		await fx.enabled([current, prior]);
+		let loadCalls = 0;
+		const readData = fx.plugin.loadData;
+		fx.plugin.loadData = async () => { loadCalls++; return readData(); };
+		await assert.rejects(fx.plugin.onload(), /Disable the previous plugin/);
+		assert.equal(loadCalls, 0, "a blocked migration must not load or initialize settings");
+		assert.deepEqual(JSON.parse(await readFile(join(fx.paths(current, "data.json"), "../../..", "community-plugins.json"), "utf8")), [current, prior]);
+		await fx.enabled([current]);
+		await fx.plugin.migrateLegacyPluginData();
+		for (const [name, value] of Object.entries(durable)) {
+			assert.equal(await readFile(fx.paths(current, name), "utf8"), value);
+			assert.equal(await readFile(fx.paths(prior, name), "utf8"), value, "predecessor remains untouched");
+		}
+		assert.deepEqual((await readdir(fx.paths(current, ""))).sort(), ["data.json", "lark-sync-state.json", "manifest.json", "media-uploads", "publish-log.json"]);
+		assert.deepEqual(await readdir(fx.paths(current, "media-uploads")), ["a".repeat(64) + ".json"]);
+		await fx.plugin.loadSettings();
+		assert.deepEqual(fx.plugin.settings.documentBindings, settings.documentBindings);
+		assert.deepEqual(fx.plugin.settings.nativeCalloutStates, settings.nativeCalloutStates);
+		assert.deepEqual(fx.plugin.settings.attachmentStates, settings.attachmentStates);
+		assert.equal(fx.plugin.settings.targetTokenOrUrl, "wiki-test");
+		assert.equal((await fx.plugin.loadLarkSyncState()).documents["report-doc"].contentHash, "hash");
+		await fx.put(prior, { "data.json": '{"targetTokenOrUrl":"modified"}' });
+		await rm(fx.paths(current, "publish-log.json"));
+		await fx.plugin.migrateLegacyPluginData();
+		assert.equal(await readFile(fx.paths(current, "data.json"), "utf8"), durable["data.json"]);
+		await assert.rejects(readFile(fx.paths(current, "publish-log.json")), { code: "ENOENT" });
+		await fx.enabled([current, archived]);
+		await assert.rejects(fx.plugin.migrateLegacyPluginData(), /feishu-lark-cli-sync/);
+
+		const retry = await fixture("retry");
+		await retry.put(prior, durable);
+		await retry.put(current, { "lark-sync-state.json": durable["lark-sync-state.json"], "publish-log.json": "keep existing" });
+		await assert.rejects(retry.plugin.migrateLegacyPluginData(), /Existing migration destination was not overwritten/);
+		assert.equal(await readFile(retry.paths(current, "publish-log.json"), "utf8"), "keep existing");
+		await assert.rejects(readFile(retry.paths(current, "data.json")), { code: "ENOENT" });
+		await assert.rejects(readFile(retry.paths(current, journal)), { code: "ENOENT" });
+		await rm(retry.paths(current, "publish-log.json"));
+		await retry.plugin.migrateLegacyPluginData();
+		assert.equal(await readFile(retry.paths(current, "data.json"), "utf8"), durable["data.json"]);
+		assert.equal(await readFile(retry.paths(current, journal), "utf8"), durable[journal]);
+
+		const corrupt = await fixture("corrupt-settings");
+		await corrupt.put(prior, { ...durable, "data.json": "[]" });
+		await corrupt.put(archived, { "data.json": '{"targetTokenOrUrl":"do not fall back to older settings"}' });
+		await assert.rejects(corrupt.plugin.migrateLegacyPluginData(), /Previous plugin settings could not be read/);
+		assert.deepEqual(await readdir(corrupt.paths(current, "")), [], "invalid settings cannot commit or publish any state");
+		await corrupt.put(prior, { "data.json": durable["data.json"] });
+		await corrupt.plugin.migrateLegacyPluginData();
+		assert.equal(await readFile(corrupt.paths(current, "data.json"), "utf8"), durable["data.json"]);
+
+		const fallback = await fixture("archived");
+		await fallback.put(prior, { "lark-sync-state.json": "do not mix" });
+		await fallback.put(archived, { "data.json": '{"targetTokenOrUrl":"older"}' });
+		await fallback.plugin.migrateLegacyPluginData();
+		await fallback.plugin.loadSettings();
+		assert.equal(fallback.plugin.settings.targetTokenOrUrl, "older");
+		await assert.rejects(readFile(fallback.paths(current, "lark-sync-state.json")), { code: "ENOENT" });
+
+		const syncOnly = await fixture("sync-only", prior);
+		await syncOnly.put(archived, { "lark-sync-state.json": durable["lark-sync-state.json"] });
+		await syncOnly.plugin.migrateLegacyPluginData();
+		assert.equal(await readFile(syncOnly.paths(prior, "lark-sync-state.json"), "utf8"), durable["lark-sync-state.json"]);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+}
+console.log("Plugin ID migration tests passed");
 const TestFile = globalThis.__TFileClass;
 const TestFolder = globalThis.__TFolderClass;
 delete globalThis.__TFolderClass;

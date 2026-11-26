@@ -3446,3 +3446,4 @@ function escapeRegExp(value: string): string {
 export { prepareNativeCallouts } from "./native-callout";
 export { syncNativeDocument } from "./native-sync";
 export { preparePdfCropImages, scanPdfCropReferences } from "./pdf-crops";
+export { hasRemoteFileBlocks } from "./local-attachments";

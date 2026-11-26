@@ -39,6 +39,7 @@ export interface NativeSyncHost {
 	api: NativeApi;
 	labelColors?: boolean;
 	allowReplaceUntracked?: boolean;
+	preserveFileBlocks?: boolean;
 	images?: LocalImageResource[];
 	uploadImage?(blockId: string, image: LocalImageResource): Promise<string>;
 	save(state: NativeState): Promise<void>;
@@ -239,6 +240,15 @@ export async function syncNativeDocument(
 	let state: NativeState = previous
 		? JSON.parse(JSON.stringify(previous)) as NativeState
 		: { version: 1, sourceHash: "", units: [] };
+	function bodyRoots(snapshot: Awaited<ReturnType<typeof readNativeSnapshot>>, owned: string[]): string[] {
+		if (!host.preserveFileBlocks) return snapshot.roots;
+		const isFileRoot = (id: string): boolean => {
+			const block = snapshot.blocks.get(id);
+			return block?.block_type === 23 || (block?.block_type === 33
+				&& (block.children || []).some((child) => snapshot.blocks.get(child)?.block_type === 23));
+		};
+		return snapshot.roots.filter((id) => owned.includes(id) || !isFileRoot(id));
+	}
 	async function finishPending(): Promise<void> {
 		const pending = state.pending!;
 		if (!pending.inserted && pending.request.children_id.length) {
@@ -346,7 +356,7 @@ export async function syncNativeDocument(
 			snapshot = await readNativeSnapshot(doc, host.api);
 		}
 		const expected = pending.units.map((unit) => unit.id);
-		if (JSON.stringify(snapshot.roots) !== JSON.stringify(expected))
+		if (JSON.stringify(bodyRoots(snapshot, expected)) !== JSON.stringify(expected))
 			throw new Error("远端根块与本次同步计划不一致，事务已保留。");
 		state = {
 			version: 1,
@@ -360,7 +370,7 @@ export async function syncNativeDocument(
 	const snapshot = await readNativeSnapshot(doc, host.api);
 	if (state.sourceHash) {
 		if (
-			JSON.stringify(snapshot.roots) !== JSON.stringify(state.units.map((unit) => unit.id)) ||
+			JSON.stringify(bodyRoots(snapshot, state.units.map((unit) => unit.id))) !== JSON.stringify(state.units.map((unit) => unit.id)) ||
 			state.units.some((unit) => nativeTreeHash(unit.id, snapshot.blocks) !== unit.remoteHash)
 		) {
 			throw new Error("飞书正文已被修改，请先合并远端改动后再同步；折叠状态变化不受此限制。");
@@ -370,7 +380,7 @@ export async function syncNativeDocument(
 			return state;
 		}
 	}
-	if (!state.sourceHash && snapshot.roots.length && host.allowReplaceUntracked === false)
+	if (!state.sourceHash && bodyRoots(snapshot, []).length && host.allowReplaceUntracked === false)
 		throw new Error("安全精确模式下缺少原生折叠映射，请先使用自动同步完成首次迁移。");
 	const tree = await convertNativeDocument(markdown, host.api, host.images, host.labelColors);
 	const byId = new Map(tree.blocks.map((block) => [block.block_id, block]));
@@ -388,7 +398,7 @@ export async function syncNativeDocument(
 	const fresh = units.slice(prefix, units.length - suffix);
 	const oldIds = state.sourceHash
 		? state.units.slice(prefix, state.units.length - suffix).map((unit) => unit.id)
-		: snapshot.roots;
+		: bodyRoots(snapshot, []);
 	// Preserve reader fold choices for matching parent titles when their body changes.
 	const folds = new Map<string, boolean[]>();
 	const titleOf = (block: NativeBlock): string => {
@@ -430,7 +440,7 @@ export async function syncNativeDocument(
 		labelStyleVersion,
 		clientToken: randomUUID(),
 		imageUploads,
-		request: { children_id: fresh.map((unit) => unit.id), descendants: wireBlocks, index: prefix },
+		request: { children_id: fresh.map((unit) => unit.id), descendants: wireBlocks, index: prefix === 0 ? 0 : snapshot.roots.indexOf(state.units[prefix - 1]!.id) + 1 },
 		remove: oldIds,
 		removeHashes: Object.fromEntries(oldIds.map((id) => [id, nativeTreeHash(id, snapshot.blocks)])),
 		units: [...state.units.slice(0, prefix), ...fresh, ...(suffix ? state.units.slice(-suffix) : [])]

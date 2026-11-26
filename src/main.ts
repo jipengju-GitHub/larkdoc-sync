@@ -21,7 +21,7 @@ import {
 } from "obsidian";
 import { ChildProcess, execFile, spawn } from "child_process";
 import { constants } from "fs";
-import { access, chmod, copyFile, mkdir, readFile, rename, stat } from "fs/promises";
+import { access, chmod, copyFile, link, lstat, mkdir, readdir, readFile, rename, stat } from "fs/promises";
 import { mkdtemp, rm, writeFile } from "fs/promises";
 import { basename, dirname, join } from "path";
 import { homedir, tmpdir } from "os";
@@ -156,6 +156,10 @@ import { getPublishManagementTitle, PublishedLinkBindingModal, PublishedLinkEntr
 import { LarkCommandError, PublishAttempt, PublishLog, PublishLogEntry, readLarkErrorCode } from "./publish-log";
 import { createPdfBindingKey, PdfBinding, PdfPublishParent, publishPdf } from "./pdf-publish";
 import { buildPublishedPdfTargets, rewritePublishedPdfLinks } from "./pdf-links";
+import {
+	AttachmentSyncError, buildAttachmentInsertArgs, hasRemoteFileBlocks, hashAttachment, prepareLocalAttachments, resolveAttachmentFile,
+	stripAttachmentCards, syncLocalAttachments, type AttachmentState, type LocalAttachment
+} from "./local-attachments";
 import { SyncQueue } from "./sync-queue";
 import { collectIgnoreDirectories, IgnoreRules, ignoreFilePath } from "./ignore-rules";
 import { VaultNodeLike } from "./sync-ignore";
@@ -202,9 +206,12 @@ const LARK_CLI_COMMAND_SCRIPT_NAME = "lark-cli-command.mjs";
 const LARK_SYNC_STATE_FILE_NAME = "lark-sync-state.json";
 const PRE_PUSH_HOOK_MARKER = "Feishu Docs Publisher";
 const LEGACY_PRE_PUSH_HOOK_MARKER = "Feishu Lark CLI Sync";
-// Archived plugin id: copy its vault data forward and keep recognizing its Git hook.
-const LEGACY_PLUGIN_ID = "feishu-lark-cli-sync";
-const LARK_HEADER_ICON_ID = "feishu-docs-publisher-header";
+// Newest first: never merge files from different plugin generations.
+const LEGACY_PLUGIN_IDS = ["feishu-docs-publisher", "feishu-lark-cli-sync"] as const;
+const PLUGIN_DATA_FILE_NAME = "data.json";
+const PUBLISH_LOG_FILE_NAME = "publish-log.json";
+const MEDIA_UPLOAD_JOURNAL_DIR = "media-uploads";
+const LARK_HEADER_ICON_ID = "larkdoc-sync-header";
 const LARK_HEADER_ICON_SVG = `
 <svg viewBox="0 0 24 24" aria-hidden="true">
 	<path fill="#24c9a5" d="M3 11.5 21 4l-5.4 7.5-6.2 2.2z"/>
@@ -243,6 +250,7 @@ interface LarkCliSyncSettings {
 	nativeCalloutExport: boolean;
 	researchLabelColors: boolean;
 	nativeCalloutStates?: Record<string, NativeState>;
+	attachmentStates?: Record<string, AttachmentState>;
 	language: Language;
 	larkCliPath: string;
 	larkCliVersionCheck?: LarkCliVersionCheck;
@@ -416,6 +424,7 @@ interface PdfViewport {
 }
 
 interface PreparedNoteContent {
+	attachments?: LocalAttachment[];
 	content: string;
 	images: LocalImageResource[];
 }
@@ -925,7 +934,13 @@ export default class LarkCliSyncPlugin extends Plugin {
 
 	override async onload(): Promise<void> {
 		addIcon(LARK_HEADER_ICON_ID, LARK_HEADER_ICON_SVG);
-		await this.migrateLegacyPluginData();
+		try {
+			await this.migrateLegacyPluginData();
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			new Notice(`Larkdoc-sync 无法启动 / Could not start: ${message}`, 12000);
+			throw error; // Do not initialize default state after an incomplete migration.
+		}
 		await this.loadSettings();
 		this.syncState = await this.loadLarkSyncState();
 		await this.cleanupDisconnectedFolderBindings();
@@ -1081,42 +1096,120 @@ export default class LarkCliSyncPlugin extends Plugin {
 
 	private async migrateLegacyPluginData(): Promise<void> {
 		const vaultPath = this.getVaultBasePath();
-		if (!vaultPath) {
-			return;
+		if (!vaultPath) return;
+		const id = this.manifest.id;
+		const predecessors = id === "larkdoc-sync" ? LEGACY_PLUGIN_IDS
+			: id === LEGACY_PLUGIN_IDS[0] ? LEGACY_PLUGIN_IDS.slice(1) : [];
+		if (!predecessors.length) return;
+
+		const configDirectory = join(vaultPath, this.app.vault.configDir);
+		const enabledPath = join(configDirectory, "community-plugins.json");
+		let enabled: unknown;
+		try { enabled = JSON.parse(await readFile(enabledPath, "utf8")); }
+		catch (error) { if (!this.isFileNotFoundError(error)) throw error; }
+		if (enabled !== undefined && (!Array.isArray(enabled) || !enabled.every((entry) => typeof entry === "string"))) {
+			throw new Error("无法验证已启用插件 / Could not verify enabled community plugins.");
+		}
+		const enabledPredecessors = predecessors.filter((prior) => Array.isArray(enabled) && enabled.includes(prior));
+		if (enabledPredecessors.length) {
+			throw new Error(`请先停用旧插件再重新启用当前插件 / Disable the previous plugin(s) and reload: ${enabledPredecessors.join(", ")}`);
 		}
 
-		let currentDirectory: string;
+		const currentDirectory = this.getPluginDirectoryPath();
+		if (await this.migrationPathExists(join(currentDirectory, PLUGIN_DATA_FILE_NAME), false)) return;
+		const candidates = predecessors.map((prior) => join(configDirectory, "plugins", prior));
+		let sourceDirectory: string | undefined;
+		let syncOnlyDirectory: string | undefined;
+		for (const candidate of candidates) {
+			if (!await this.migrationPathExists(candidate, true)) continue;
+			if (await this.migrationPathExists(join(candidate, PLUGIN_DATA_FILE_NAME), false)) {
+				sourceDirectory = candidate;
+				break;
+			}
+			if (!syncOnlyDirectory && await this.migrationPathExists(join(candidate, LARK_SYNC_STATE_FILE_NAME), false)) {
+				syncOnlyDirectory = candidate;
+			}
+		}
+		// Support legacy installs with only a sync cache, but never mix generations.
+		sourceDirectory ??= syncOnlyDirectory;
+		if (!sourceDirectory) return;
+
+		const dataPaths = [LARK_SYNC_STATE_FILE_NAME, PUBLISH_LOG_FILE_NAME];
+		const journalDirectory = join(sourceDirectory, MEDIA_UPLOAD_JOURNAL_DIR);
+		if (await this.migrationPathExists(journalDirectory, true)) {
+			for (const name of await readdir(journalDirectory)) {
+				if (/^[a-f0-9]{64}\.json$/.test(name)) dataPaths.push(join(MEDIA_UPLOAD_JOURNAL_DIR, name));
+			}
+		}
+		// Settings are the commit marker. Stage every file before publishing anything.
+		dataPaths.push(PLUGIN_DATA_FILE_NAME);
+		await mkdir(currentDirectory, { recursive: true });
+		await this.migrationPathExists(currentDirectory, true);
+		const staging = await mkdtemp(join(currentDirectory, ".migration-"));
 		try {
-			currentDirectory = this.getPluginDirectoryPath();
-		} catch {
-			return;
+			const copied = [];
+			for (const path of dataPaths) {
+				const source = join(sourceDirectory, path);
+				if (!await this.migrationPathExists(source, false)) continue;
+				const staged = join(staging, path);
+				await mkdir(dirname(staged), { recursive: true });
+				await copyFile(source, staged, constants.COPYFILE_EXCL);
+				if (path === PLUGIN_DATA_FILE_NAME) {
+					try {
+						if (!this.isRecord(JSON.parse(await readFile(staged, "utf8")))) throw new TypeError();
+					} catch {
+						throw new Error("旧插件设置无法读取，迁移未完成 / Previous plugin settings could not be read; migration was not completed.");
+					}
+				}
+				copied.push(path);
+			}
+			const alreadyCopied = async (path: string): Promise<boolean> => {
+				const destination = join(currentDirectory, path);
+				if (dirname(destination) !== currentDirectory
+					&& !await this.migrationPathExists(dirname(destination), true)) return false;
+				if (!await this.migrationPathExists(destination, false)) return false;
+				if (!(await readFile(destination)).equals(await readFile(join(staging, path)))) {
+					throw new Error(`目标文件已存在，未覆盖 / Existing migration destination was not overwritten: ${path}`);
+				}
+				return true;
+			};
+			const filesToPublish: string[] = [];
+			for (const path of copied) {
+				if (await this.migrationPathExists(join(currentDirectory, PLUGIN_DATA_FILE_NAME), false)) return;
+				if (!await alreadyCopied(path)) filesToPublish.push(path);
+			}
+			for (const path of filesToPublish) {
+				// A completed concurrent migration or an initialized install takes precedence.
+				if (await this.migrationPathExists(join(currentDirectory, PLUGIN_DATA_FILE_NAME), false)) return;
+				const destination = join(currentDirectory, path);
+				await mkdir(dirname(destination), { recursive: true });
+				await this.migrationPathExists(dirname(destination), true);
+				const staged = join(staging, path);
+				try { await link(staged, destination); }
+				catch (error) {
+					if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+					// A retry may find a complete file from a prior interrupted attempt.
+					if (!await this.migrationPathExists(destination, false)
+						|| !(await readFile(destination)).equals(await readFile(staged))) {
+						throw new Error(`目标文件已存在，未覆盖 / Existing migration destination was not overwritten: ${path}`);
+					}
+				}
+			}
+		} finally {
+			await rm(staging, { recursive: true, force: true }).catch((error: unknown) => {
+				console.warn("[Larkdoc-sync] Could not remove migration staging directory", error);
+			});
 		}
-
-		const legacyDirectory = join(vaultPath, this.app.vault.configDir, "plugins", LEGACY_PLUGIN_ID);
-		await this.copyLegacyPluginFileIfMissing(
-			join(legacyDirectory, "data.json"),
-			join(currentDirectory, "data.json")
-		);
-		await this.copyLegacyPluginFileIfMissing(
-			join(legacyDirectory, LARK_SYNC_STATE_FILE_NAME),
-			join(currentDirectory, LARK_SYNC_STATE_FILE_NAME)
-		);
 	}
 
-	private async copyLegacyPluginFileIfMissing(sourcePath: string, destinationPath: string): Promise<void> {
-		if (await this.pathExists(destinationPath) || !await this.pathExists(sourcePath)) {
-			return;
-		}
-
+	private async migrationPathExists(path: string, directory: boolean): Promise<boolean> {
 		try {
-			await mkdir(dirname(destinationPath), { recursive: true });
-			await copyFile(sourcePath, destinationPath);
+			const entry = await lstat(path);
+			if (directory ? entry.isDirectory() : entry.isFile()) return true;
+			throw new Error(`不是普通${directory ? "目录" : "文件"} / Unexpected migration path: ${path}`);
 		} catch (error) {
-			console.warn("[Feishu Docs Publisher] failed to copy legacy plugin data", {
-				sourcePath,
-				destinationPath,
-				error
-			});
+			if (this.isFileNotFoundError(error)) return false;
+			throw error;
 		}
 	}
 
@@ -1553,7 +1646,7 @@ export default class LarkCliSyncPlugin extends Plugin {
 	}
 
 	private getPublishLog(): PublishLog {
-		return this.publishLog ??= new PublishLog(join(this.getPluginDirectoryPath(), "publish-log.json"));
+		return this.publishLog ??= new PublishLog(join(this.getPluginDirectoryPath(), PUBLISH_LOG_FILE_NAME));
 	}
 
 	private async writePublishLog(target: Pick<PublishLogEntry, "path" | "source" | "action">,
@@ -3136,14 +3229,24 @@ exec "${nodePath}" "${scriptPath}" "$@"
 					}
 				})
 			: { content, images: [] };
-		if (!scanLocalImageReferences(pdf.content).length) return pdf;
+		const priorAttachments = this.settings.attachmentStates?.[getDocumentStateKey(binding?.token || binding?.url || "")];
+		const attachmentInput = await prepareLocalAttachments({
+			content: pdf.content,
+			managedPaths: [...Object.keys(priorAttachments?.current || {}), ...(priorAttachments?.pending ? [priorAttachments.pending.path] : [])],
+			markdownPath: file.path,
+			getVaultRoot: () => this.getVaultRoot(),
+			getPaths: () => this.app.vault.getFiles().map((candidate) => candidate.path),
+			resolvePath: (target, source) => this.app.metadataCache?.getFirstLinkpathDest?.(target, source)?.path || null,
+			isExcluded: (path) => this.isSyncIgnored(path)
+		});
+		if (!scanLocalImageReferences(attachmentInput.content).length) return { ...attachmentInput, images: pdf.images };
 		const local = await prepareLocalImages({
 			vaultRoot: this.getVaultRoot(),
 			markdownPath: file.path,
-			content: pdf.content,
+			content: attachmentInput.content,
 			imageIndex: this.buildVaultMediaIndex()
 		});
-		return { content: local.content, images: [...pdf.images, ...local.images] };
+		return { ...attachmentInput, content: local.content, images: [...pdf.images, ...local.images] };
 	}
 
 	private getVaultRoot(): string {
@@ -3236,12 +3339,14 @@ exec "${nodePath}" "${scriptPath}" "$@"
 			await onCreated?.(binding);
 			if (native) {
 				await this.syncNativePreparedDocument(token, preparedContent, true);
+				await this.syncNoteAttachments(token, preparedContent.attachments || []);
 				return binding;
 			}
 			if (publishPlan.staged) {
 				await this.appendStagedDocumentBatches(token || url, publishPlan.batches);
 			}
 			await this.materializeLocalImages(token, preparedContent.images);
+			await this.syncNoteAttachments(token, preparedContent.attachments || []);
 			return binding;
 		});
 	}
@@ -3272,7 +3377,8 @@ exec "${nodePath}" "${scriptPath}" "$@"
 			canonical,
 			stripPreparedMarkdownTitle(prepared.content),
 			{
-				allowReplaceUntracked: creating || strategy !== "precise",
+				allowReplaceUntracked: creating || (strategy !== "precise" && !hasRemoteFileBlocks(fetched.content)),
+				preserveFileBlocks: true,
 				labelColors: this.settings.researchLabelColors,
 				images: prepared.images,
 				uploadImage: async (blockId, image) => {
@@ -3372,8 +3478,31 @@ exec "${nodePath}" "${scriptPath}" "$@"
 		preparedContent: PreparedNoteContent,
 		context: { mode: SyncMode; path: string; strategy?: SyncStrategy; stateKeys?: string[]; attempt?: PublishAttempt }
 	): Promise<Partial<BoundLarkDocument>> {
+		const result = await this.updateLarkDocumentBody(doc, preparedContent, context);
+		const target = result.token || result.url || doc;
+		const revisionId = await this.syncNoteAttachments(target, preparedContent.attachments || [], context.attempt?.markChanged);
+		if (revisionId !== undefined && !this.nativeStateForDocument(target)) {
+			await this.saveRemoteDocumentState(target, [doc, ...(context.stateKeys || [])], {
+				expectedMarkdown: preparedContent.content,
+				expectedRevisionId: revisionId,
+				allowRemoteChanges: true,
+				context,
+				refreshPolicy: this.getRemoteStateRefreshPolicy(context.mode)
+			});
+		}
+		return result;
+	}
+
+	private async updateLarkDocumentBody(
+		doc: string,
+		preparedContent: PreparedNoteContent,
+		context: { mode: SyncMode; path: string; strategy?: SyncStrategy; stateKeys?: string[]; attempt?: PublishAttempt }
+	): Promise<Partial<BoundLarkDocument>> {
 		const content = preparedContent.content;
-		const strategy = context.strategy || this.settings.syncStrategy;
+		let strategy = context.strategy || this.settings.syncStrategy;
+		// Whole-document overwrite cannot preserve native or manually added file cards.
+		// If a doc has cards, attempt a precise sync instead of deleting any cards implicitly.
+		if (strategy === "overwrite" && hasRemoteFileBlocks((await this.fetchLarkDocumentWithIds(doc)).content)) strategy = "precise";
 		if ((this.settings.nativeCalloutExport && this.hasNativeCallouts(content)) || this.nativeStateForDocument(doc)) {
 			await this.syncNativePreparedDocument(doc, preparedContent, false, strategy, context.attempt?.markChanged);
 			return {};
@@ -3533,6 +3662,13 @@ exec "${nodePath}" "${scriptPath}" "$@"
 			let latestDocument: LarkDocumentUpdateResult = {};
 			let nextRevisionId = context.previousRevisionId;
 			if (plan.mode === "overwrite") {
+				const remote = await this.fetchLarkDocumentWithIds(doc);
+				if (hasRemoteFileBlocks(remote.content)) {
+					throw new LocalizedSyncError(this.settings.language === "en"
+						? "Could not safely update the text without overwriting attachment cards. The existing attachments were kept."
+						: "无法在不覆盖附件卡片的情况下同步正文；已有附件已保留。");
+				}
+				nextRevisionId = remote.revisionId;
 				this.removeSyncStateKeys([doc, ...(context.stateKeys || [])], doc);
 				await this.saveLarkSyncState();
 			}
@@ -3542,7 +3678,7 @@ exec "${nodePath}" "${scriptPath}" "$@"
 					: "content" in command && command.content
 					? await this.writeTempMarkdown(tempFile.directory, `sync-${index}`, command.content)
 					: tempFile.fileName;
-				const commandRevisionId = plan.mode === "precise" ? nextRevisionId : undefined;
+				const commandRevisionId = nextRevisionId;
 				const commandWithContent = "contentFileName" in command
 					? { ...command, doc, contentFileName }
 					: { ...command, doc };
@@ -3708,7 +3844,7 @@ exec "${nodePath}" "${scriptPath}" "$@"
 
 			const hasLocalImages = containsLocalImagePlaceholders(baselineMarkdown);
 			const isExpectedContentVisible = hasLocalImages
-				? await isRemoteXmlContentEquivalent(remoteXml.content, baselineMarkdown)
+				? await isRemoteXmlContentEquivalent(stripAttachmentCards(remoteXml.content), baselineMarkdown)
 				: await this.isRemoteMarkdownContentEquivalent(
 					(await this.fetchLarkDocumentMarkdown(doc)).content,
 					expectedSignature
@@ -4015,8 +4151,8 @@ exec "${nodePath}" "${scriptPath}" "$@"
 		const remoteDoc = remoteXml.doc || remoteMarkdown?.doc || doc;
 		return await createDocumentSyncStateFromRemote(
 			remoteDoc,
-			baselineMarkdown || remoteMarkdown.content,
-			remoteXml.content,
+			baselineMarkdown || stripAttachmentCards(remoteMarkdown.content),
+			stripAttachmentCards(remoteXml.content),
 			remoteXml.revisionId ?? remoteMarkdown.revisionId
 		);
 	}
@@ -4145,11 +4281,11 @@ exec "${nodePath}" "${scriptPath}" "$@"
 		}
 		const baselineMarkdown = expectedMarkdown && containsLocalImagePlaceholders(expectedMarkdown)
 			? expectedMarkdown
-			: remoteMarkdown?.content || expectedMarkdown || "";
+			: stripAttachmentCards(remoteMarkdown?.content || "") || expectedMarkdown || "";
 		let state = await createDocumentSyncStateFromRemote(
 			remoteDoc,
 			baselineMarkdown,
-			remoteXml.content,
+			stripAttachmentCards(remoteXml.content),
 			remoteXml.revisionId
 		);
 		if (expectedMarkdown && containsLocalImagePlaceholders(expectedMarkdown)) {
@@ -4204,6 +4340,50 @@ exec "${nodePath}" "${scriptPath}" "$@"
 		};
 	}
 
+	private async syncNoteAttachments(doc: string, files: LocalAttachment[], onChange?: () => void): Promise<number | undefined> {
+		const states = this.settings.attachmentStates;
+		const alias = getDocumentStateKey(doc);
+		if (!files.length && !states?.[alias] && !doc.includes("/wiki/")) return;
+		if (!files.length && !Object.keys(states || {}).length) return;
+		const initial = await this.fetchLarkDocumentWithIds(doc);
+		const canonical = getDocumentStateKey(initial.doc || doc);
+		if (!/^[A-Za-z0-9_-]+$/.test(canonical)) throw new Error("Unable to resolve attachment document ID");
+		const current = states?.[canonical];
+		let changed = Boolean(current?.pending);
+		const noteChange = () => { changed = true; onChange?.(); };
+		await syncLocalAttachments(files, current, {
+			fetch: () => this.fetchLarkDocumentWithIds(canonical),
+			insert: async (file, begin) => {
+				const directory = await mkdtemp(join(tmpdir(), "larkdoc-attachment-"));
+				try {
+					const resolved = await resolveAttachmentFile(this.getVaultRoot(), file.vaultPath);
+					if (resolved !== file.absolutePath) throw new Error("Attachment target changed while preparing sync; retry.");
+					const fileName = this.sanitizeFileName(basename(file.vaultPath));
+					const snapshot = join(directory, fileName);
+					await copyFile(resolved, snapshot);
+					if (await hashAttachment(snapshot) !== file.contentHash || await resolveAttachmentFile(this.getVaultRoot(), file.vaultPath) !== resolved) {
+						throw new Error("Attachment changed while preparing sync; retry.");
+					}
+					await begin();
+					const result = await this.runLarkCli(buildAttachmentInsertArgs(canonical, fileName), { cwd: directory });
+					noteChange();
+					return result.data?.block_id || result.data?.document?.new_blocks?.[0]?.block_id || "";
+				} finally { await rm(directory, { force: true, recursive: true }).catch(() => {}); }
+			},
+			delete: async (blockId, revisionId) => {
+				await this.runLarkCli(buildUpdateCommandArgs({ doc: canonical, command: "block_delete", blockId, revisionId }));
+				noteChange();
+			},
+			save: async (state) => {
+				const persisted = this.settings.attachmentStates ??= {};
+				if (Object.keys(state.current).length || state.pending) persisted[canonical] = JSON.parse(JSON.stringify(state)) as AttachmentState;
+				else delete persisted[canonical];
+				await this.saveSettingsWithoutClearingCommandCache();
+			}
+		});
+		return changed ? (await this.fetchLarkDocumentWithIds(canonical)).revisionId : undefined;
+	}
+
 	private async materializeLocalImages(
 		doc: string,
 		images: LocalImageResource[],
@@ -4211,7 +4391,7 @@ exec "${nodePath}" "${scriptPath}" "$@"
 	): Promise<{ content: string; revisionId?: number } | undefined> {
 		return await materializePreparedLocalImages(images, {
 			uploadJournal: images.length > 0
-				? createMediaUploadJournal(join(this.getPluginDirectoryPath(), "media-uploads"), getDocumentStateKey(doc))
+				? createMediaUploadJournal(join(this.getPluginDirectoryPath(), MEDIA_UPLOAD_JOURNAL_DIR), getDocumentStateKey(doc))
 				: undefined,
 			fetchRemoteWithIds: async () => {
 				const remote = await this.fetchLarkDocumentWithIds(doc);
@@ -4329,7 +4509,7 @@ exec "${nodePath}" "${scriptPath}" "$@"
 				url: result.url || binding.url
 			};
 		} catch (error) {
-			if (!this.isRemoteDocumentDeletedError(error)) {
+			if (error instanceof AttachmentSyncError || !this.isRemoteDocumentDeletedError(error)) {
 				throw error;
 			}
 
@@ -4944,7 +5124,7 @@ exec "${nodePath}" "${scriptPath}" "$@"
 				return await this.runLarkCliOnce(args, options);
 			} catch (error) {
 				// An upload may already have committed; retry only after reconciling its token.
-				if (["+upload", "+create", "+node-create", "+create-folder", "+delete", "+node-delete"].includes(args[1] || "")
+				if (["+upload", "+media-insert", "+create", "+node-create", "+create-folder", "+delete", "+node-delete"].includes(args[1] || "")
 					|| !this.isLarkRateLimitError(error) || attempt >= LARK_CLI_RATE_LIMIT_RETRY_DELAYS_MS.length) {
 					throw error;
 				}

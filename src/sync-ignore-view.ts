@@ -14,7 +14,7 @@ import {
 	VaultNodeLike
 } from "./sync-ignore";
 
-export const SYNC_IGNORE_VIEW_TYPE = "feishu-docs-publisher-sync-ignore";
+export const SYNC_IGNORE_VIEW_TYPE = "larkdoc-sync-sync-ignore";
 
 export interface SyncIgnoreHost {
 	getLanguage(): "zh-CN" | "en";

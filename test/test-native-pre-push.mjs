@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 const exec = promisify(execFile);
 const workspace = await mkdtemp(join(tmpdir(), "native-hook-test-"));
-const plugin = join(workspace, ".obsidian/plugins/feishu-docs-publisher");
+const plugin = join(workspace, ".obsidian/plugins/larkdoc-sync");
 const settingsPath = join(plugin, "data.json"),
 	remotePath = join(workspace, "remote.json");
 const json = async (path) => JSON.parse(await readFile(path, "utf8"));

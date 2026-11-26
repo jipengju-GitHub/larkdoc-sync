@@ -1,3 +1,4 @@
+import { AttachmentSyncError } from "./local-attachments";
 import { randomUUID } from "crypto";
 import { readFile, rename, rm, writeFile } from "fs/promises";
 
@@ -8,6 +9,7 @@ export interface PublishLogEntry {
 	source: "manual" | "save" | "folder";
 	status: "success" | "failed";
 	code?: string;
+	attachmentPath?: string;
 }
 
 type PublishLogTarget = Pick<PublishLogEntry, "path" | "action" | "source">;
@@ -40,7 +42,8 @@ function isEntry(value: unknown): value is PublishLogEntry {
 	return !!row && typeof row.at === "string" && Number.isFinite(Date.parse(row.at)) && typeof row.path === "string"
 		&& (row.action === "publish" || row.action === "sync" || row.action === "overwrite")
 		&& (row.source === "manual" || row.source === "save" || row.source === "folder")
-		&& (row.status === "success" || row.status === "failed") && (row.code === undefined || validCode(row.code) === row.code);
+		&& (row.status === "success" || row.status === "failed") && (row.code === undefined || validCode(row.code) === row.code)
+		&& (row.attachmentPath === undefined || typeof row.attachmentPath === "string");
 }
 
 /** Per-vault, local-only, newest-first history. Serializes updates from parallel folder workers. */
@@ -56,7 +59,10 @@ export class PublishLog {
 
 	add(target: PublishLogTarget, outcome: { status: "success" } | { status: "failed"; error: unknown }): Promise<void> {
 		const row: PublishLogEntry = { ...target, at: new Date().toISOString(), status: outcome.status };
-		if (outcome.status === "failed") row.code = getPublishErrorCode(outcome.error);
+		if (outcome.status === "failed") {
+			row.code = getPublishErrorCode(outcome.error);
+			if (outcome.error instanceof AttachmentSyncError) row.attachmentPath = outcome.error.attachmentPath.slice(0, 500);
+		}
 		const next = this.writes.then(async () => {
 			const entries = [row, ...(await this.read())].slice(0, LIMIT);
 			const temporary = `${this.file}.${randomUUID()}.tmp`;

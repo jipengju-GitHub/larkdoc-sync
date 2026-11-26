@@ -1,5 +1,6 @@
 import { App, ButtonComponent, Menu, Modal, Setting, TextComponent } from "obsidian";
 import type { PublishLogEntry } from "./publish-log";
+import { ATTACHMENT_RECOVERY_HINT } from "./local-attachments";
 
 export type PublishedLinkKind = "markdown" | "pdf" | "folder";
 
@@ -318,7 +319,12 @@ export class PublishedLinksModal extends Modal {
 				row.createEl("td", { text: t.logAction[entry.action] });
 				row.createEl("td", { text: t.logSource[entry.source] });
 				row.createEl("td", { text: t.logStatus[entry.status], cls: `feishu-lark-log-${entry.status}` });
-				row.createEl("td", { text: entry.code || "—" });
+				const code = row.createEl("td", { text: entry.attachmentPath ? `${entry.code || "—"} · ${entry.attachmentPath}` : entry.code || "—" });
+				if (entry.code === "ATTACHMENT_RECONCILE_REQUIRED") {
+					const help = code.createEl("details");
+					help.createEl("summary", { text: "恢复指引 / Recovery" });
+					help.createEl("p", { text: ATTACHMENT_RECOVERY_HINT });
+				}
 			}
 		} catch {
 			if (current()) showFeedback(feedback, t.logError, true);

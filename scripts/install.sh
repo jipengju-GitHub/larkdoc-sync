@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PLUGIN_ID="feishu-docs-publisher"
+PLUGIN_ID="larkdoc-sync"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 VAULT_PATH="${1:-}"
@@ -30,30 +30,26 @@ if [ ! -d "$VAULT_PATH" ]; then
 fi
 
 PLUGIN_DIR="$VAULT_PATH/.obsidian/plugins/$PLUGIN_ID"
-mkdir -p "$PLUGIN_DIR"
-
-for file in manifest.json main.js lark-sync-core.mjs lark-cli-command.mjs README.md README_ZH.md sync-pre-push.mjs styles.css; do
+ASSETS=(manifest.json main.js styles.css)
+for file in "${ASSETS[@]}"; do
   if [ ! -f "$REPO_DIR/$file" ]; then
-    echo "缺少 $file，请先运行 npm install && npm run build / Missing $file, run npm install && npm run build first." >&2
+    echo "缺少 $file，请先运行 npm ci && npm run build / Missing $file, run npm ci && npm run build first." >&2
     exit 1
   fi
+done
 
+mkdir -p "$PLUGIN_DIR"
+for file in "${ASSETS[@]}"; do
   cp "$REPO_DIR/$file" "$PLUGIN_DIR/$file"
 done
 
-chmod +x "$PLUGIN_DIR/sync-pre-push.mjs"
-
-HOOK_PATH="$VAULT_PATH/.git/hooks/pre-push"
-HOOK_DIR="$VAULT_PATH/.git/hooks"
-if [ -f "$HOOK_PATH" ] && grep -Eq "Feishu Docs Publisher|Feishu Lark CLI Sync" "$HOOK_PATH"; then
-  cp "$PLUGIN_DIR/sync-pre-push.mjs" "$HOOK_DIR/sync-pre-push.mjs"
-  cp "$PLUGIN_DIR/lark-sync-core.mjs" "$HOOK_DIR/lark-sync-core.mjs"
-  cp "$PLUGIN_DIR/lark-cli-command.mjs" "$HOOK_DIR/lark-cli-command.mjs"
-  chmod +x "$HOOK_DIR/sync-pre-push.mjs"
+if [ -d "$VAULT_PATH/.obsidian/plugins/feishu-docs-publisher" ] || [ -d "$VAULT_PATH/.obsidian/plugins/feishu-lark-cli-sync" ]; then
+  echo "请先禁用旧插件（不要卸载），再启用 Larkdoc-sync 迁移旧数据。"
+  echo "Disable the old plugin without uninstalling it before enabling Larkdoc-sync to import data."
 fi
 
 echo "已安装到 / Installed to: $PLUGIN_DIR"
-echo "请在 Obsidian 设置中启用 Feishu Docs Publisher。"
-echo "Enable Feishu Docs Publisher in Obsidian settings."
+echo "请在 Obsidian 设置中启用 Larkdoc-sync。"
+echo "Enable Larkdoc-sync in Obsidian settings."
 echo "启用后在“CLI 与授权”中安装/升级 lark-cli、创建应用并登录。"
 echo "Then use CLI & authorization in settings to install/upgrade lark-cli, create the app, and sign in."

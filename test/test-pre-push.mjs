@@ -22,7 +22,7 @@ async function run() {
 		await execFileAsync("git", ["config", "user.email", "test@example.com"], { cwd: workspace });
 		await execFileAsync("git", ["config", "user.name", "Test User"], { cwd: workspace });
 
-			await mkdir(join(workspace, ".obsidian", "plugins", "feishu-docs-publisher"), { recursive: true });
+			await mkdir(join(workspace, ".obsidian", "plugins", "larkdoc-sync"), { recursive: true });
 			await mkdir(join(workspace, "bin"), { recursive: true });
 			await cp("sync-pre-push.mjs", join(workspace, "sync-pre-push.mjs"));
 			await cp("lark-sync-core.mjs", join(workspace, "lark-sync-core.mjs"));
@@ -93,8 +93,11 @@ async function run() {
 		await testImageOnlyChangeSyncsReferencingDocument(workspace, true);
 		await testVideoOnlyChangeFindsReferencingDocument(workspace);
 		await testRecordedMediaUploadResumes(workspace);
-		await testLegacyPluginDataFallback(workspace);
-		await testCurrentPluginDataPrecedesLegacy(workspace);
+		for (const legacyId of ["feishu-docs-publisher", "feishu-lark-cli-sync"]) {
+			await testLegacyPluginDataFallback(workspace, legacyId);
+			await testCurrentPluginDataPrecedesLegacy(workspace, legacyId);
+		}
+		await testPluginDataPriorityAndCorruption(workspace);
 	} finally {
 		await rm(workspace, { recursive: true, force: true });
 	}
@@ -751,7 +754,7 @@ async function testStateWritePreservesExternalDocuments(workspace) {
 				workspace,
 				".obsidian",
 				"plugins",
-				"feishu-docs-publisher",
+				"larkdoc-sync",
 				"lark-sync-state.json"
 			)
 		}
@@ -1506,7 +1509,7 @@ async function testRecordedMediaUploadResumes(workspace) {
 		await writeFile(mediaStatePath(workspace), JSON.stringify({
 			content: head + placeholder + (position === "adjacent" ? uploaded + tail : tail + uploaded), revisionId: 4
 		}));
-		const journalDirectory = join(workspace, ".obsidian", "plugins", "feishu-docs-publisher", "media-uploads");
+		const journalDirectory = join(workspace, ".obsidian", "plugins", "larkdoc-sync", "media-uploads");
 		await createMediaUploadJournal(journalDirectory, "doc-token").save(image, "uploaded-image");
 		await runHook(workspace, { env: { LARK_CLI_MEDIA_FLOW: "1" } });
 		const log = await readLog(workspace);
@@ -1579,10 +1582,10 @@ async function spawnHook(workspace, stdin, envOverrides) {
 	});
 }
 
-async function testLegacyPluginDataFallback(workspace) {
+async function testLegacyPluginDataFallback(workspace, legacyId) {
 	await resetWorkspaceFiles(workspace);
-	await rm(join(workspace, ".obsidian", "plugins", "feishu-docs-publisher"), { recursive: true, force: true });
-	const legacyDirectory = join(workspace, ".obsidian", "plugins", "feishu-lark-cli-sync");
+	await rm(join(workspace, ".obsidian", "plugins", "larkdoc-sync"), { recursive: true, force: true });
+	const legacyDirectory = join(workspace, ".obsidian", "plugins", legacyId);
 	await mkdir(legacyDirectory, { recursive: true });
 	const contentForLark = "# bound\n\nBody";
 	await writeFile(join(legacyDirectory, "data.json"), JSON.stringify({
@@ -1609,13 +1612,13 @@ async function testLegacyPluginDataFallback(workspace) {
 	await runHook(workspace);
 	const log = await readLog(workspace);
 	assert.match(log, /docs \+fetch .*--api-version v2/);
-	await mkdir(join(workspace, ".obsidian", "plugins", "feishu-docs-publisher"), { recursive: true });
+	await mkdir(join(workspace, ".obsidian", "plugins", "larkdoc-sync"), { recursive: true });
 	await rm(legacyDirectory, { recursive: true, force: true });
 }
 
-async function testCurrentPluginDataPrecedesLegacy(workspace) {
+async function testCurrentPluginDataPrecedesLegacy(workspace, legacyId) {
 	await resetWorkspaceFiles(workspace);
-	const legacyDirectory = join(workspace, ".obsidian", "plugins", "feishu-lark-cli-sync");
+	const legacyDirectory = join(workspace, ".obsidian", "plugins", legacyId);
 	await mkdir(legacyDirectory, { recursive: true });
 	await writeSettings(workspace, { autoSyncMode: "manual", syncStrategy: "precise", language: "en" });
 	await writeFile(join(legacyDirectory, "data.json"), JSON.stringify({
@@ -1629,6 +1632,29 @@ async function testCurrentPluginDataPrecedesLegacy(workspace) {
 	await runHook(workspace);
 	assert.equal(await readLog(workspace), "");
 	await rm(legacyDirectory, { recursive: true, force: true });
+}
+
+async function testPluginDataPriorityAndCorruption(workspace) {
+	const plugins = join(workspace, ".obsidian", "plugins");
+	const older = join(plugins, "feishu-lark-cli-sync");
+	const previous = join(plugins, "feishu-docs-publisher");
+	const current = settingsPath(workspace);
+	await mkdir(older, { recursive: true });
+	await mkdir(previous, { recursive: true });
+	try {
+		await unlink(current);
+		await writeFile(join(older, "data.json"), "not json");
+		await writeFile(join(previous, "data.json"), '{"autoSyncMode":"manual"}');
+		assert.equal((await runHook(workspace)).exitCode, 0);
+		await writeFile(current, "not json");
+		const result = await runHook(workspace, { reject: false });
+		assert.equal(result.exitCode, 1);
+		assert.match(result.stderr, /larkdoc-sync[/\\]data\.json/);
+		assert.equal(await readFile(join(previous, "data.json"), "utf8"), '{"autoSyncMode":"manual"}');
+	} finally {
+		await rm(older, { recursive: true, force: true });
+		await rm(previous, { recursive: true, force: true });
+	}
 }
 
 async function writeSettings(workspace, settings) {
@@ -1645,7 +1671,7 @@ async function writeSettings(workspace, settings) {
 }
 
 function settingsPath(workspace) {
-	return join(workspace, ".obsidian", "plugins", "feishu-docs-publisher", "data.json");
+	return join(workspace, ".obsidian", "plugins", "larkdoc-sync", "data.json");
 }
 
 function larkCliExecutablePath(workspace) {
@@ -1677,7 +1703,7 @@ async function writeSyncStateWithUnits(workspace, doc, content, units) {
 
 async function writeSyncStateRaw(workspace, state) {
 	await writeFile(
-		join(workspace, ".obsidian", "plugins", "feishu-docs-publisher", "lark-sync-state.json"),
+		join(workspace, ".obsidian", "plugins", "larkdoc-sync", "lark-sync-state.json"),
 		JSON.stringify(state, null, 2),
 		"utf8"
 	);
@@ -2015,7 +2041,7 @@ async function readNotificationLog(workspace) {
 
 async function readSyncState(workspace) {
 	const rawState = await readFile(
-		join(workspace, ".obsidian", "plugins", "feishu-docs-publisher", "lark-sync-state.json"),
+		join(workspace, ".obsidian", "plugins", "larkdoc-sync", "lark-sync-state.json"),
 		"utf8"
 	);
 	return JSON.parse(rawState);

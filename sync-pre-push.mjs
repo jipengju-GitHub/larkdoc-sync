@@ -20,6 +20,7 @@ import {
 import {
 	extractTitle,
 	preparePdfCropImages,
+	hasRemoteFileBlocks,
 	prepareNativeCallouts,
 	syncNativeDocument,
 	stripPreparedMarkdownTitle,
@@ -65,9 +66,8 @@ import {
 
 const execFileAsync = promisify(execFile);
 
-const PLUGIN_ID = "feishu-docs-publisher";
-// Archived plugin id. Used when this hook runs before Obsidian has copied data.json.
-const LEGACY_PLUGIN_ID = "feishu-lark-cli-sync";
+const PLUGIN_ID = "larkdoc-sync";
+const LEGACY_PLUGIN_IDS = ["feishu-docs-publisher", "feishu-lark-cli-sync"];
 const LARK_SYNC_STATE_FILE_NAME = "lark-sync-state.json";
 const ZERO_REF = "0000000000000000000000000000000000000000";
 const MAX_STDERR_LENGTH = 1600;
@@ -364,6 +364,7 @@ async function syncMarkdownTask(task, settings, syncState) {
 			const canonical = remote.doc || remote.content.match(/<title\b[^>]*\bid="([A-Za-z0-9_-]+)"/)?.[1] || task.canonicalToken;
 			await syncNativeDocument(canonical, stripPreparedMarkdownTitle(contentForLark), {
 				allowReplaceUntracked: settings.syncStrategy !== "precise",
+				preserveFileBlocks: true,
 				labelColors: settings.researchLabelColors === true,
 				images:preparedContent.images,
 				uploadImage:async (blockId,image) => {
@@ -552,6 +553,10 @@ async function executeSyncPlanForTask(
 		}));
 	}
 
+	const overwriteSnapshot = plan.mode === "overwrite" ? await fetchLarkDocumentWithIds(settings, doc) : undefined;
+	if (overwriteSnapshot && hasRemoteFileBlocks(overwriteSnapshot.content)) {
+		throw new PrePushSyncError("飞书文档含文件卡片，Git Hook 已阻止全文覆盖；请在 Obsidian 中同步。 / File cards protected; sync this note in Obsidian.");
+	}
 	await withTempMarkdown(basename(task.filePath, ".md"), contentForLark, async (tempFile) => {
 		let latestRevisionId;
 		let nextRevisionId = baseRevisionId;
@@ -562,7 +567,7 @@ async function executeSyncPlanForTask(
 				: "content" in command && command.content
 				? await writeTempMarkdown(tempFile.directory, `sync-${index}`, command.content)
 				: tempFile.fileName;
-			const commandRevisionId = plan.mode === "precise" ? nextRevisionId : undefined;
+			const commandRevisionId = plan.mode === "precise" ? nextRevisionId : overwriteSnapshot?.revisionId;
 			const args = buildUpdateCommandArgs(
 				"contentFileName" in command
 					? { ...command, contentFileName, revisionId: commandRevisionId }
@@ -997,30 +1002,26 @@ function pluginDirectory(repoRoot, pluginId) {
 	return join(repoRoot, ".obsidian", "plugins", pluginId);
 }
 
-function resolvePluginDirectory(repoRoot) {
-	const currentDirectory = pluginDirectory(repoRoot, PLUGIN_ID);
-	if (existsSync(join(currentDirectory, "data.json"))) {
-		return currentDirectory;
-	}
-
-	const legacyDirectory = pluginDirectory(repoRoot, LEGACY_PLUGIN_ID);
-	if (existsSync(join(legacyDirectory, "data.json"))) {
-		return legacyDirectory;
-	}
-
-	return currentDirectory;
-}
-
 async function readSettings(repoRoot) {
-	pluginDirectoryPath = resolvePluginDirectory(repoRoot);
-	settingsPath = join(pluginDirectoryPath, "data.json");
-	try {
-		const rawSettings = await readFile(settingsPath, "utf8");
-		const settings = JSON.parse(rawSettings);
-		return isRecord(settings) ? settings : {};
-	} catch {
-		return {};
+	for (const pluginId of [PLUGIN_ID, ...LEGACY_PLUGIN_IDS]) {
+		const directory = pluginDirectory(repoRoot, pluginId);
+		const path = join(directory, "data.json");
+		try {
+			const rawSettings = await readFile(path, "utf8");
+			const settings = JSON.parse(rawSettings);
+			if (!isRecord(settings)) {
+				throw new Error("Expected a JSON object");
+			}
+			pluginDirectoryPath = directory;
+			settingsPath = path;
+			return settings;
+		} catch (error) {
+			if (error?.code !== "ENOENT") {
+				throw new Error(`Could not read Larkdoc-sync settings at ${path}: ${error.message}`, { cause: error });
+			}
+		}
 	}
+	return {};
 }
 
 async function writeLarkCliVersionCheck(versionCheck) {
@@ -1108,7 +1109,7 @@ async function writeSyncState(repoRoot, syncState, settings) {
 }
 
 function getSyncStatePath(repoRoot) {
-	const directory = pluginDirectoryPath || resolvePluginDirectory(repoRoot);
+	const directory = pluginDirectoryPath || pluginDirectory(repoRoot, PLUGIN_ID);
 	return join(directory, LARK_SYNC_STATE_FILE_NAME);
 }
 
