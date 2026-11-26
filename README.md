@@ -8,6 +8,11 @@ Write in Obsidian and share a Feishu or Lark Docs link with your team. Larkdoc-s
 
 **Originally derived from:** [wanghuan9/obsidian-feishu-lark-cli-sync](https://github.com/wanghuan9/obsidian-feishu-lark-cli-sync). This edition is directly based on [totok22/feishu-docs-publisher](https://github.com/totok22/feishu-docs-publisher) and maintained by [jipengju-GitHub](https://github.com/jipengju-GitHub).
 
+## Highlights
+
+- **Local publish log.** See which notes and files were published, synced, or overwritten, and check failure details without leaving Obsidian.
+- **Redesigned controls.** Use the Lark icon in the note header to sync or manage its link. The left ribbon opens a redesigned manager with separate **Published files** and **Publish log** tabs. Settings are grouped into Basic, Document, Sync, and Advanced so common options are easier to find.
+
 ## Publish your first note
 
 You need **Obsidian 1.13.0 or later on desktop**, a Feishu or Lark account, and Node.js with npm for building the plugin and installing the CLI.
@@ -36,12 +41,6 @@ You need **Obsidian 1.13.0 or later on desktop**, a Feishu or Lark account, and 
 | The sync hook blocks `git push` | Fix the reported sync error or switch to a different automatic sync mode. Git hook setup and network proxy options are under **Advanced settings**, collapsed by default. |
 
 Use **Document settings** to adjust the title source, control whether a successful sync opens the document, or write `lark_doc_url` into note frontmatter. By default, bindings are only stored in local plugin data. See [native export details](./docs/native-export.md) for Callouts, PDF page embeds, and region crops.
-
-## Moving from an earlier plugin
-
-Larkdoc-sync now has its own plugin ID: `larkdoc-sync`. Back up your old plugin directory, **disable the old plugin without uninstalling it**, then install and enable Larkdoc-sync using the new directory above.
-
-On first launch, if the new plugin has no saved settings, it imports existing settings, file bindings, sync state, and the local publish log from `feishu-docs-publisher` (or the earlier `feishu-lark-cli-sync`). It does not republish files or delete the old data. Verify your existing links under **Published files** before syncing again. If the vault uses a `pre-push` hook, avoid running `git push` during migration. Check the hook under **Advanced settings** afterward. If you return to the old plugin, first disable Larkdoc-sync and reinstall the previous plugin's hook; changes made after migration are not copied back.
 
 ## Network and privacy
 

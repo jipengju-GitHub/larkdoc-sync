@@ -8,6 +8,11 @@
 
 **源自于：** [wanghuan9/obsidian-feishu-lark-cli-sync](https://github.com/wanghuan9/obsidian-feishu-lark-cli-sync)。本改版直接基于 [totok22/feishu-docs-publisher](https://github.com/totok22/feishu-docs-publisher)，由 [jipengju-GitHub](https://github.com/jipengju-GitHub) 维护。
 
+## 版本亮点
+
+- **新增本地发布日志。** 在 Obsidian 内查看笔记和文件的发布、同步及覆盖结果，失败时可直接查看错误详情。
+- **改版管理窗口和操作入口。** 笔记右上角的 Lark 图标集中提供同步和链接操作；左侧栏打开新版「飞书文档同步助手」，用「已发布文件」和「发布日志」两个标签页分别管理绑定和查看记录。设置按基础、文档、同步和高级分组，常用选项更好找。
+
 ## 五分钟上手
 
 需要桌面版 Obsidian **1.13.0 或更新版本**、飞书或 Lark 账号，以及 Node.js 和 npm（用于构建插件和安装 CLI）。
@@ -36,12 +41,6 @@
 | `git push` 被同步失败阻断 | 解决 hook 报出的错误，或把「自动同步方式」切换到其他选项。Git hook 和网络代理都在默认折叠的「高级配置」里。 |
 
 「文档配置」用于调整标题来源、是否同步后打开文档，以及是否把 `lark_doc_url` 写进笔记的 frontmatter。插件默认只把绑定保存在本地插件数据里。更多 Callout、PDF 页码和选区导出细节见[原生导出说明](./docs/native-export.md)。
-
-## 从旧插件迁移
-
-Larkdoc-sync 使用独立插件 ID `larkdoc-sync`。先备份旧插件目录，**禁用旧插件，但先不要卸载**，再按上面的步骤把 Larkdoc-sync 安装到新目录并启用。
-
-桌面端首次启用时，如果新插件还没有保存过配置，会从 `feishu-docs-publisher`（或更早的 `feishu-lark-cli-sync`）迁移配置、文件绑定、同步状态和本地发布日志。迁移不会重新发布文档，也不会删除旧数据。请先在「已发布文件」核对原有链接，再执行同步。使用 `pre-push` hook 的知识库，迁移期间请不要执行 `git push`，迁移后到「高级配置」核对 hook 状态。如果需要回退，请先禁用 Larkdoc-sync，再启用旧插件并重新安装旧版 hook；迁移后的新改动不会自动写回旧目录。
 
 ## 网络与隐私
 
