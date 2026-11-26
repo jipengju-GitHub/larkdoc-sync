@@ -6,8 +6,6 @@ Write in Obsidian and share a Feishu or Lark Docs link with your team. Larkdoc-s
 
 > **One-way sync: Obsidian → Feishu/Lark.** Changes made in the remote document do not come back to Obsidian. Bring any remote edits you want to keep into the local note before you sync again.
 
-**Originally derived from:** [wanghuan9/obsidian-feishu-lark-cli-sync](https://github.com/wanghuan9/obsidian-feishu-lark-cli-sync). This edition is directly based on [totok22/feishu-docs-publisher](https://github.com/totok22/feishu-docs-publisher) and maintained by [jipengju-GitHub](https://github.com/jipengju-GitHub).
-
 ## Highlights
 
 - **Local publish log.** See which notes and files were published, synced, or overwritten, and check failure details without leaving Obsidian.

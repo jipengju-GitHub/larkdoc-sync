@@ -6,8 +6,6 @@
 
 > **同步方向：Obsidian → 飞书 / Lark。** 飞书上的正文改动不会回写 Obsidian。需要保留的改动，请先合并到本地笔记，再同步。
 
-**源自于：** [wanghuan9/obsidian-feishu-lark-cli-sync](https://github.com/wanghuan9/obsidian-feishu-lark-cli-sync)。本改版直接基于 [totok22/feishu-docs-publisher](https://github.com/totok22/feishu-docs-publisher)，由 [jipengju-GitHub](https://github.com/jipengju-GitHub) 维护。
-
 ## 版本亮点
 
 - **新增本地发布日志。** 在 Obsidian 内查看笔记和文件的发布、同步及覆盖结果，失败时可直接查看错误详情。
